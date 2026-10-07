@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+import asyncpg
 
-from ...core.db import get_db
+from ...core.db import _normalize_database_url, get_db
+from ...core.config import settings
 
 router = APIRouter(tags=["Health"])
 
@@ -17,28 +19,34 @@ async def health():
 
 
 @router.get("/health/db")
-async def database_health(db: AsyncSession = Depends(get_db)):
+async def database_health():
+    if not settings.database_url:
+        return {
+            "status": "error",
+            "database_connected": False,
+            "error_type": "DATABASE_URL_NOT_CONFIGURED",
+        }
+
+    database_url = _normalize_database_url(settings.database_url)
+
     try:
-        result = await db.execute(
-            text(
-                """
-                SELECT
-                    current_database() AS database_name,
-                    to_regclass('public.tasks') IS NOT NULL AS tasks_exists,
-                    to_regclass('public.notes') IS NOT NULL AS notes_exists
-                """
-            )
+        connection = await asyncpg.connect(
+            database_url,
+            timeout=10,
         )
-        row = result.mappings().one()
+        try:
+            await connection.fetchval("SELECT 1")
+        finally:
+            await connection.close()
+
         return {
             "status": "ok",
             "database_connected": True,
-            "tasks_table": row["tasks_exists"],
-            "notes_table": row["notes_exists"],
         }
     except Exception as exc:
         return {
             "status": "error",
             "database_connected": False,
             "error_type": exc.__class__.__name__,
+            "driver": "asyncpg",
         }
