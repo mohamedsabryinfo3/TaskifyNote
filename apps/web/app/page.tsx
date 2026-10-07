@@ -48,6 +48,7 @@ const fallbackAgents: Agent[] = [
   { id: 'task-manager', name: 'Task Manager', description: 'Turns ideas into clear, executable tasks.' },
   { id: 'note-analyst', name: 'Note Analyst', description: 'Finds insights, summaries, and action items in saved notes.' },
   { id: 'focus-coach', name: 'Focus Coach', description: 'Helps you choose one clear next move and avoid overload.' },
+]
 function makeId(prefix: string) {
   return prefix + Math.random().toString(36).slice(2, 10)
 }
