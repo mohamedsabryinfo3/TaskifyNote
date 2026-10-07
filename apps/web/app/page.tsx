@@ -35,7 +35,7 @@ const seedNotes: Note[] = [
   },
 ]
 
-const apiBase = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '')
+const apiBase = (process.env.NEXT_PUBLIC_API_URL || '/api/v1').replace(/\/$/, '')
 
 function makeId(prefix: string) {
   return prefix + Math.random().toString(36).slice(2, 10)
