@@ -1,4 +1,4 @@
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
 from fastapi import APIRouter
@@ -13,8 +13,9 @@ router = APIRouter(tags=["Health"])
 async def health():
     return {
         "name": "TaskifyNote",
-        "version": "0.7.5",
+        "version": "0.7.6",
         "status": "ok",
+        "database_configured": bool(settings.database_url),
     }
 
 
@@ -31,11 +32,10 @@ async def database_health():
         dsn = _normalize_postgres_dsn(settings.database_url)
         parts = urlsplit(dsn)
 
-        connection = await asyncpg.connect(
-            dsn=dsn,
-            timeout=10,
-        )
+        # Keep connection attempts well below typical serverless execution limits.
+        connection = await asyncpg.connect(dsn=dsn, timeout=3)
         try:
+            await connection.execute("SET statement_timeout = '3000ms'")
             await connection.fetchval("SELECT 1")
         finally:
             await connection.close()
@@ -53,3 +53,16 @@ async def database_health():
             "error_type": exc.__class__.__name__,
             "driver": "asyncpg",
         }
+
+
+@router.get("/health/env")
+async def environment_health():
+    return {
+        "status": "ok",
+        "database_url_configured": bool(settings.database_url),
+        "cors_configured": bool(settings.cors_origins),
+        "app_env": settings.app_env,
+        "database_scheme": (
+            urlsplit(settings.database_url).scheme if settings.database_url else None
+        ),
+    }
