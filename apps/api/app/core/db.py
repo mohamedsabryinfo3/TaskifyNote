@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -16,35 +16,19 @@ def _normalize_postgres_dsn(raw_url: str) -> str:
     url = raw_url.strip()
 
     if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://"):]
+        return "postgresql://" + url[len("postgres://"):]
 
     if url.startswith("postgresql+asyncpg://"):
-        url = "postgresql://" + url[len("postgresql+asyncpg://"):]
+        return "postgresql://" + url[len("postgresql+asyncpg://"):]
 
     if not url.startswith("postgresql://"):
         raise ValueError("DATABASE_URL must be a PostgreSQL connection URL")
 
-    parts = urlsplit(url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
-        if key != "channel_binding"
-    ]
-
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            parts.path,
-            urlencode(query),
-            parts.fragment,
-        )
-    )
+    return url
 
 
 def _get_sqlalchemy_url(raw_url: str) -> str:
-    dsn = _normalize_postgres_dsn(raw_url)
-    return "postgresql+asyncpg://" + dsn[len("postgresql://"):]
+    return "postgresql+psycopg://" + _normalize_postgres_dsn(raw_url)[len("postgresql://"):]
 
 
 def _get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -60,7 +44,7 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
         _get_sqlalchemy_url(settings.database_url),
         poolclass=NullPool,
         pool_pre_ping=True,
-        connect_args={"statement_cache_size": 0},
+        connect_args={"connect_timeout": 5},
     )
     SessionLocal = async_sessionmaker(
         _engine,
