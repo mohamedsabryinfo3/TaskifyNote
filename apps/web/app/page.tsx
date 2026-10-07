@@ -20,6 +20,12 @@ type Note = {
   createdAt: string
 }
 
+type Agent = {
+  id: string
+  name: string
+  description: string
+}
+
 const nav: View[] = ['Dashboard', 'Tasks', 'Notes', 'Sources', 'AI Assistant', 'Settings']
 const seedTasks: Task[] = [
   { id: '1', title: 'Finish project proposal', completed: false, priority: 'High' },
@@ -36,6 +42,12 @@ const seedNotes: Note[] = [
 ]
 
 const apiBase = '/api/v1'
+const fallbackAgents: Agent[] = [
+  { id: 'general', name: 'General Assistant', description: 'Your all-purpose TaskifyNote assistant.' },
+  { id: 'planner', name: 'Daily Planner', description: 'Builds a realistic plan and prioritizes what matters most.' },
+  { id: 'task-manager', name: 'Task Manager', description: 'Turns ideas into clear, executable tasks.' },
+  { id: 'note-analyst', name: 'Note Analyst', description: 'Finds insights, summaries, and action items in saved notes.' },
+  { id: 'focus-coach', name: 'Focus Coach', description: 'Helps you choose one clear next move and avoid overload.' },
 function makeId(prefix: string) {
   return prefix + Math.random().toString(36).slice(2, 10)
 }
@@ -61,6 +73,8 @@ export default function Page() {
   const [darkMode, setDarkMode] = useState(true)
   const [syncing, setSyncing] = useState(true)
   const [aiReady, setAiReady] = useState(false)
+  const [agents, setAgents] = useState<Agent[]>(fallbackAgents)
+  const [selectedAgent, setSelectedAgent] = useState('general')
 
   useEffect(() => {
     let cancelled = false
@@ -138,10 +152,22 @@ export default function Page() {
 
     async function checkAi() {
       try {
-        const response = await fetch(apiBase + '/health/ai', { cache: 'no-store' })
-        if (!response.ok) return
-        const result = await response.json()
-        if (!cancelled) setAiReady(Boolean(result.ai_configured))
+        const [healthResponse, agentsResponse] = await Promise.all([
+          fetch(apiBase + '/health/ai', { cache: 'no-store' }),
+          fetch(apiBase + '/ai/agents', { cache: 'no-store' }),
+        ])
+
+        if (healthResponse.ok) {
+          const health = await healthResponse.json()
+          if (!cancelled) setAiReady(Boolean(health.ai_configured))
+        }
+
+        if (agentsResponse.ok) {
+          const result = await agentsResponse.json()
+          if (!cancelled && Array.isArray(result.agents) && result.agents.length) {
+            setAgents(result.agents)
+          }
+        }
       } catch {
         if (!cancelled) setAiReady(false)
       }
@@ -431,7 +457,7 @@ export default function Page() {
         const response = await fetch(apiBase + '/ai/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message, agent_id: selectedAgent }),
         })
         const result = await response.json()
         if (!response.ok) {
@@ -629,7 +655,23 @@ export default function Page() {
         {active === 'AI Assistant' && (
           <section className="ai-layout">
             <div className="card chat-card">
-              <div className="chat-header"><div><span className="pill">PRIVATE AI</span><h2>Assistant</h2></div><span className={aiReady ? 'status ok' : 'status'}>{aiReady ? 'AI ready' : 'AI setup needed'}</span></div>
+              <div className="chat-header">
+                <div><span className="pill">PRIVATE AI</span><h2>Assistant</h2></div>
+                <div className="chat-header-actions">
+                  <select
+                    className="agent-select"
+                    value={selectedAgent}
+                    onChange={(event) => setSelectedAgent(event.target.value)}
+                    aria-label="Choose AI agent"
+                  >
+                    {agents.map((agent) => <option value={agent.id} key={agent.id}>{agent.name}</option>)}
+                  </select>
+                  <span className={aiReady ? 'status ok' : 'status'}>{aiReady ? 'AI ready' : 'AI setup needed'}</span>
+                </div>
+              </div>
+              <p className="agent-description">
+                {agents.find((agent) => agent.id === selectedAgent)?.description}
+              </p>
               <div className="messages">
                 {chat.map((entry, index) => <div className={entry.role === 'user' ? 'message user' : 'message'} key={index}>{entry.text}</div>)}
                 {busy && <div className="message">Thinking…</div>}
