@@ -1,0 +1,12 @@
+{
+  "name": "taskifynote",
+  "private": true,
+  "version": "0.7.5",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace personal-ai-web",
+    "build": "npm run build --workspace personal-ai-web"
+  }
+}
