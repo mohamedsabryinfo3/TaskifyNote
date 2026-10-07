@@ -8,7 +8,7 @@ from .api.routes.search import router as search_router
 from .api.routes.ingest import router as ingest_router
 from .api.routes.ai import router as ai_router
 
-app = FastAPI(title="TaskifyNote API", version="0.7.6")
+app = FastAPI(title="TaskifyNote API", version="0.7.7")
 
 app.add_middleware(
     CORSMiddleware,
