@@ -35,9 +35,7 @@ const seedNotes: Note[] = [
   },
 ]
 
-const configuredApiBase = process.env.NEXT_PUBLIC_API_URL?.trim() || ''
-const apiBase = (configuredApiBase && !configuredApiBase.includes('taskifynote-ialk90toa') ? configuredApiBase : 'https://taskifynote-api-three.vercel.app/api/v1').replace(/\/$/, '')
-
+const apiBase = '/api/v1'
 function makeId(prefix: string) {
   return prefix + Math.random().toString(36).slice(2, 10)
 }
