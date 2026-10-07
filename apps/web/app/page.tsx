@@ -59,15 +59,76 @@ export default function Page() {
     { role: 'assistant', text: 'Hi! I can help you plan today, turn ideas into tasks, and work with your saved notes.' },
   ])
   const [darkMode, setDarkMode] = useState(true)
+  const [syncing, setSyncing] = useState(true)
 
   useEffect(() => {
-    try {
-      const storedTasks = localStorage.getItem('taskifynote.tasks')
-      const storedNotes = localStorage.getItem('taskifynote.notes')
-      if (storedTasks) setTasks(JSON.parse(storedTasks))
-      if (storedNotes) setNotes(JSON.parse(storedNotes))
-    } catch {
-      // Keep seed data if local storage is unavailable.
+    let cancelled = false
+
+    async function loadWorkspace() {
+      setSyncing(true)
+
+      try {
+        const [tasksResponse, notesResponse] = await Promise.all([
+          fetch(apiBase + '/tasks', { cache: 'no-store' }),
+          fetch(apiBase + '/notes', { cache: 'no-store' }),
+        ])
+
+        if (!tasksResponse.ok || !notesResponse.ok) throw new Error('Workspace sync failed')
+
+        const apiTasks = await tasksResponse.json()
+        const apiNotes = await notesResponse.json()
+
+        if (cancelled) return
+
+        setTasks(
+          apiTasks.map((task: {
+            id: string
+            title: string
+            status: string
+            priority: number
+          }) => ({
+            id: task.id,
+            title: task.title,
+            completed: task.status === 'done',
+            priority: task.priority >= 2 ? 'High' : task.priority === 1 ? 'Medium' : 'Low',
+          })),
+        )
+
+        setNotes(
+          apiNotes.map((note: {
+            id: string
+            title: string
+            content: string
+            source_url?: string | null
+            created_at?: string
+          }) => ({
+            id: note.id,
+            title: note.title || 'Untitled note',
+            content: note.content || '',
+            sourceUrl: note.source_url || undefined,
+            createdAt: note.created_at || new Date().toISOString(),
+          })),
+        )
+      } catch {
+        try {
+          const storedTasks = localStorage.getItem('taskifynote.tasks')
+          const storedNotes = localStorage.getItem('taskifynote.notes')
+          if (!cancelled) {
+            if (storedTasks) setTasks(JSON.parse(storedTasks))
+            if (storedNotes) setNotes(JSON.parse(storedNotes))
+            showNotice('API unavailable — showing local cache')
+          }
+        } catch {
+          // Keep current state if local storage is unavailable.
+        }
+      } finally {
+        if (!cancelled) setSyncing(false)
+      }
+    }
+
+    void loadWorkspace()
+    return () => {
+      cancelled = true
     }
   }, [])
 
@@ -100,10 +161,35 @@ export default function Page() {
     window.setTimeout(() => setNotice(''), 2600)
   }
 
-  function toggleTask(id: string) {
-    setTasks((current) =>
-      current.map((task) => (task.id === id ? { ...task, completed: !task.completed } : task)),
-    )
+  async function toggleTask(id: string) {
+    const task = tasks.find((item) => item.id === id)
+    if (!task) return
+
+    const nextCompleted = !task.completed
+
+    try {
+      const response = await fetch(
+        apiBase + '/tasks/' + id + (nextCompleted ? '/complete' : ''),
+        nextCompleted
+          ? { method: 'POST' }
+          : {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'todo' }),
+            },
+      )
+
+      if (!response.ok) throw new Error('Task update failed')
+
+      setTasks((current) =>
+        current.map((item) => (item.id === id ? { ...item, completed: nextCompleted } : item)),
+      )
+    } catch {
+      setTasks((current) =>
+        current.map((item) => (item.id === id ? { ...item, completed: nextCompleted } : item)),
+      )
+      showNotice('API unavailable — task updated locally')
+    }
   }
 
   async function addTask(event: FormEvent) {
@@ -111,22 +197,34 @@ export default function Page() {
     const title = taskTitle.trim()
     if (!title) return
     setBusy(true)
-    const localTask: Task = { id: makeId('t_'), title, completed: false, priority: 'Medium' }
 
     try {
-      if (apiBase) {
-        const response = await fetch(apiBase + '/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, priority: 0 }),
-        })
-        if (!response.ok) throw new Error('API task creation failed')
+      const response = await fetch(apiBase + '/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, priority: 0 }),
+      })
+      if (!response.ok) throw new Error('API task creation failed')
+
+      const result = await response.json()
+      const createdTask: Task = {
+        id: result.id,
+        title: result.title,
+        completed: result.status === 'done',
+        priority: result.priority >= 2 ? 'High' : result.priority === 1 ? 'Medium' : 'Low',
       }
-      setTasks((current) => [localTask, ...current])
+
+      setTasks((current) => [createdTask, ...current])
       setTaskTitle('')
       setCaptureOpen(false)
-      showNotice(apiBase ? 'Task created' : 'Task saved locally')
+      showNotice('Task created')
     } catch {
+      const localTask: Task = {
+        id: makeId('t_'),
+        title,
+        completed: false,
+        priority: 'Medium',
+      }
       setTasks((current) => [localTask, ...current])
       showNotice('API unavailable — task saved locally')
       setTaskTitle('')
@@ -143,28 +241,36 @@ export default function Page() {
     if (!title && !content) return
     const finalTitle = title || 'Untitled note'
     setBusy(true)
-    const localNote: Note = {
-      id: makeId('n_'),
-      title: finalTitle,
-      content,
-      createdAt: new Date().toISOString(),
-    }
 
     try {
-      if (apiBase) {
-        const response = await fetch(apiBase + '/notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: finalTitle, content }),
-        })
-        if (!response.ok) throw new Error('API note creation failed')
+      const response = await fetch(apiBase + '/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: finalTitle, content }),
+      })
+      if (!response.ok) throw new Error('API note creation failed')
+
+      const result = await response.json()
+      const createdNote: Note = {
+        id: result.id,
+        title: result.title || finalTitle,
+        content: result.content || content,
+        sourceUrl: result.source_url || undefined,
+        createdAt: result.created_at || new Date().toISOString(),
       }
-      setNotes((current) => [localNote, ...current])
+
+      setNotes((current) => [createdNote, ...current])
       setNoteTitle('')
       setNoteContent('')
       setCaptureOpen(false)
-      showNotice(apiBase ? 'Note created' : 'Note saved locally')
+      showNotice('Note created')
     } catch {
+      const localNote: Note = {
+        id: makeId('n_'),
+        title: finalTitle,
+        content,
+        createdAt: new Date().toISOString(),
+      }
       setNotes((current) => [localNote, ...current])
       showNotice('API unavailable — note saved locally')
       setNoteTitle('')
@@ -191,22 +297,33 @@ export default function Page() {
     setBusy(true)
 
     try {
-      if (apiBase) {
-        const response = await fetch(apiBase + '/notes/' + editingNoteId, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, content }),
-        })
-        if (!response.ok) throw new Error('API note update failed')
-      }
+      const response = await fetch(apiBase + '/notes/' + editingNoteId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, content }),
+      })
+      if (!response.ok) throw new Error('API note update failed')
+
+      const result = await response.json()
       setNotes((current) =>
-        current.map((note) => (note.id === editingNoteId ? { ...note, title, content } : note)),
+        current.map((note) =>
+          note.id === editingNoteId
+            ? {
+                ...note,
+                id: result.id || note.id,
+                title: result.title || title,
+                content: result.content ?? content,
+                sourceUrl: result.source_url || note.sourceUrl,
+                createdAt: result.created_at || note.createdAt,
+              }
+            : note,
+        ),
       )
       setEditingNoteId(null)
       setNoteTitle('')
       setNoteContent('')
       setCaptureOpen(false)
-      showNotice(apiBase ? 'Note updated' : 'Note updated locally')
+      showNotice('Note updated')
     } catch {
       setNotes((current) =>
         current.map((note) => (note.id === editingNoteId ? { ...note, title, content } : note)),
@@ -218,6 +335,30 @@ export default function Page() {
       showNotice('API unavailable — note updated locally')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function deleteTask(id: string) {
+    try {
+      const response = await fetch(apiBase + '/tasks/' + id, { method: 'DELETE' })
+      if (!response.ok) throw new Error('Task delete failed')
+      setTasks((current) => current.filter((item) => item.id !== id))
+      showNotice('Task deleted')
+    } catch {
+      setTasks((current) => current.filter((item) => item.id !== id))
+      showNotice('API unavailable — task deleted locally')
+    }
+  }
+
+  async function deleteNote(id: string) {
+    try {
+      const response = await fetch(apiBase + '/notes/' + id, { method: 'DELETE' })
+      if (!response.ok) throw new Error('Note delete failed')
+      setNotes((current) => current.filter((item) => item.id !== id))
+      showNotice('Note deleted')
+    } catch {
+      setNotes((current) => current.filter((item) => item.id !== id))
+      showNotice('API unavailable — note deleted locally')
     }
   }
 
@@ -319,7 +460,7 @@ export default function Page() {
 
         <div className="sidebar-footer">
           <span>Personal workspace</span>
-          <small>v0.7.5 · {apiBase ? 'API connected' : 'local mode'}</small>
+          <small>v0.7.8 · {syncing ? 'Syncing…' : 'API connected'}</small>
         </div>
       </aside>
 
@@ -408,7 +549,7 @@ export default function Page() {
                   <div className="task-card" key={task.id}>
                     <button className={task.completed ? 'check done' : 'check'} onClick={() => toggleTask(task.id)} aria-label="Toggle task">✓</button>
                     <div><strong className={task.completed ? 'strike' : ''}>{task.title}</strong><span>{task.completed ? 'Completed' : task.priority + ' priority'}</span></div>
-                    <button className="ghost" onClick={() => setTasks((current) => current.filter((item) => item.id !== task.id))}>Delete</button>
+                    <button className="ghost" onClick={() => void deleteTask(task.id)}>Delete</button>
                   </div>
                 ))}
                 {!filteredTasks.length && <EmptyState title="No matching tasks" action="Create task" onClick={() => openCapture('task')} />}
@@ -428,7 +569,7 @@ export default function Page() {
                       <span className="pill">{note.sourceUrl ? 'SOURCE NOTE' : 'NOTE'}</span>
                       <div className="note-actions">
                         <button className="ghost" onClick={() => editNote(note)}>Edit</button>
-                        <button className="ghost danger" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>Delete</button>
+                        <button className="ghost danger" onClick={() => void deleteNote(note.id)}>Delete</button>
                       </div>
                     </div>
                     <button className="note-body" onClick={() => editNote(note)} aria-label={'Edit ' + note.title}>
