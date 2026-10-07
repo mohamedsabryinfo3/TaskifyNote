@@ -1,10 +1,10 @@
-from fastapi import APIRouter
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-import asyncpg
+from urllib.parse import urlsplit
 
-from ...core.db import _normalize_database_url, get_db
+import asyncpg
+from fastapi import APIRouter
+
 from ...core.config import settings
+from ...core.db import _normalize_postgres_dsn
 
 router = APIRouter(tags=["Health"])
 
@@ -27,11 +27,12 @@ async def database_health():
             "error_type": "DATABASE_URL_NOT_CONFIGURED",
         }
 
-    database_url = _normalize_database_url(settings.database_url)
-
     try:
+        dsn = _normalize_postgres_dsn(settings.database_url)
+        parts = urlsplit(dsn)
+
         connection = await asyncpg.connect(
-            database_url,
+            dsn=dsn,
             timeout=10,
         )
         try:
@@ -42,6 +43,8 @@ async def database_health():
         return {
             "status": "ok",
             "database_connected": True,
+            "host": parts.hostname,
+            "database": parts.path.lstrip("/") or None,
         }
     except Exception as exc:
         return {
