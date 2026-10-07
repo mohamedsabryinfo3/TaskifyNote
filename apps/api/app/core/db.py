@@ -3,6 +3,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .config import settings
 
@@ -11,25 +12,24 @@ _engine = None
 SessionLocal = None
 
 
-def _normalize_database_url(raw_url: str) -> str:
+def _normalize_postgres_dsn(raw_url: str) -> str:
     url = raw_url.strip()
 
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
 
-    if url.startswith("postgresql://"):
-        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    if url.startswith("postgresql+asyncpg://"):
+        url = "postgresql://" + url[len("postgresql+asyncpg://"):]
+
+    if not url.startswith("postgresql://"):
+        raise ValueError("DATABASE_URL must be a PostgreSQL connection URL")
 
     parts = urlsplit(url)
-    query = []
-
-    for key, value in parse_qsl(parts.query, keep_blank_values=True):
-        if key == "sslmode":
-            query.append(("ssl", value))
-        elif key == "channel_binding":
-            continue
-        else:
-            query.append((key, value))
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "channel_binding"
+    ]
 
     return urlunsplit(
         (
@@ -42,6 +42,11 @@ def _normalize_database_url(raw_url: str) -> str:
     )
 
 
+def _get_sqlalchemy_url(raw_url: str) -> str:
+    dsn = _normalize_postgres_dsn(raw_url)
+    return "postgresql+asyncpg://" + dsn[len("postgresql://"):]
+
+
 def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     global _engine, SessionLocal
 
@@ -51,13 +56,10 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is not configured")
 
-    database_url = _normalize_database_url(settings.database_url)
-
     _engine = create_async_engine(
-        database_url,
+        _get_sqlalchemy_url(settings.database_url),
+        poolclass=NullPool,
         pool_pre_ping=True,
-        pool_size=1,
-        max_overflow=0,
         connect_args={"statement_cache_size": 0},
     )
     SessionLocal = async_sessionmaker(
