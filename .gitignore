@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+.gradle/
+build/
+local.properties
+.idea/
+.vscode/
+__pycache__/
+.pytest_cache/
+*.log
