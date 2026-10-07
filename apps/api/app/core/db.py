@@ -27,7 +27,6 @@ def _normalize_database_url(raw_url: str) -> str:
         if key == "sslmode":
             query.append(("ssl", value))
         elif key == "channel_binding":
-            # channel_binding is not an asyncpg connection argument.
             continue
         else:
             query.append((key, value))
@@ -72,11 +71,17 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     try:
         session_factory = _get_session_factory()
-    except RuntimeError as exc:
+    except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail="Database is not configured on this deployment.",
+            detail=f"Database configuration error: {exc.__class__.__name__}",
         ) from exc
 
-    async with session_factory() as session:
-        yield session
+    try:
+        async with session_factory() as session:
+            yield session
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database operation failed: {exc.__class__.__name__}",
+        ) from exc
