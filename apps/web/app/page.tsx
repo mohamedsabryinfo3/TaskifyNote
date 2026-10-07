@@ -51,6 +51,7 @@ export default function Page() {
   const [taskTitle, setTaskTitle] = useState('')
   const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -175,6 +176,52 @@ export default function Page() {
     }
   }
 
+  function editNote(note: Note) {
+    setEditingNoteId(note.id)
+    setNoteTitle(note.title)
+    setNoteContent(note.content)
+    setCaptureMode('note')
+    setCaptureOpen(true)
+  }
+
+  async function saveEditedNote(event: FormEvent) {
+    event.preventDefault()
+    if (!editingNoteId) return
+    const title = noteTitle.trim() || 'Untitled note'
+    const content = noteContent.trim()
+    setBusy(true)
+
+    try {
+      if (apiBase) {
+        const response = await fetch(apiBase + '/notes/' + editingNoteId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content }),
+        })
+        if (!response.ok) throw new Error('API note update failed')
+      }
+      setNotes((current) =>
+        current.map((note) => (note.id === editingNoteId ? { ...note, title, content } : note)),
+      )
+      setEditingNoteId(null)
+      setNoteTitle('')
+      setNoteContent('')
+      setCaptureOpen(false)
+      showNotice(apiBase ? 'Note updated' : 'Note updated locally')
+    } catch {
+      setNotes((current) =>
+        current.map((note) => (note.id === editingNoteId ? { ...note, title, content } : note)),
+      )
+      setEditingNoteId(null)
+      setNoteTitle('')
+      setNoteContent('')
+      setCaptureOpen(false)
+      showNotice('API unavailable — note updated locally')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function captureUrl(event: FormEvent) {
     event.preventDefault()
     const target = url.trim()
@@ -243,6 +290,11 @@ export default function Page() {
 
   function openCapture(mode: CaptureMode = 'task') {
     setCaptureMode(mode)
+    setEditingNoteId(null)
+    if (mode === 'note') {
+      setNoteTitle('')
+      setNoteContent('')
+    }
     setCaptureOpen(true)
   }
 
@@ -373,10 +425,19 @@ export default function Page() {
               <div className="notes-grid">
                 {filteredNotes.map((note) => (
                   <article className="note-card" key={note.id}>
-                    <div className="note-top"><span className="pill">NOTE</span><button className="ghost" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>Delete</button></div>
-                    <h3>{note.title}</h3>
-                    <p>{note.content || 'Empty note'}</p>
+                    <div className="note-top">
+                      <span className="pill">{note.sourceUrl ? 'SOURCE NOTE' : 'NOTE'}</span>
+                      <div className="note-actions">
+                        <button className="ghost" onClick={() => editNote(note)}>Edit</button>
+                        <button className="ghost danger" onClick={() => setNotes((current) => current.filter((item) => item.id !== note.id))}>Delete</button>
+                      </div>
+                    </div>
+                    <button className="note-body" onClick={() => editNote(note)} aria-label={'Edit ' + note.title}>
+                      <h3>{note.title || 'Untitled note'}</h3>
+                      <p>{note.content.trim() ? note.content : 'No content yet. Click Edit to start writing.'}</p>
+                    </button>
                     {note.sourceUrl && <a href={note.sourceUrl} target="_blank" rel="noreferrer">{note.sourceUrl}</a>}
+                    <div className="note-footer"><span>{new Date(note.createdAt).toLocaleDateString()}</span><button className="text-button" onClick={() => editNote(note)}>Open note →</button></div>
                   </article>
                 ))}
                 {!filteredNotes.length && <EmptyState title="No notes yet" action="Create note" onClick={() => openCapture('note')} />}
@@ -437,12 +498,22 @@ export default function Page() {
       {captureOpen && (
         <div className="modal-backdrop" onMouseDown={() => !busy && setCaptureOpen(false)}>
           <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-head"><div><span className="pill">CAPTURE</span><h2>{captureMode === 'task' ? 'New task' : captureMode === 'note' ? 'New note' : 'Capture a URL'}</h2></div><button className="close" onClick={() => setCaptureOpen(false)}>×</button></div>
+            <div className="modal-head"><div><span className="pill">CAPTURE</span><h2>{captureMode === 'task' ? 'New task' : captureMode === 'note' ? (editingNoteId ? 'Edit note' : 'New note') : 'Capture a URL'}</h2></div><button className="close" onClick={() => { setEditingNoteId(null); setCaptureOpen(false) }}>×</button></div>
             <div className="mode-tabs">
               {(['task', 'note', 'url'] as CaptureMode[]).map((mode) => <button className={captureMode === mode ? 'selected' : ''} key={mode} onClick={() => setCaptureMode(mode)}>{mode === 'task' ? 'Task' : mode === 'note' ? 'Note' : 'URL'}</button>)}
             </div>
             {captureMode === 'task' && <form onSubmit={addTask}><input autoFocus value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)} placeholder="What needs to be done?" /><div className="modal-actions"><button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="action" disabled={busy}>Create task</button></div></form>}
-            {captureMode === 'note' && <form onSubmit={addNote}><input autoFocus value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Note title" /><textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Write your note..." rows={7} /><div className="modal-actions"><button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="action" disabled={busy}>Save note</button></div></form>}
+            {captureMode === 'note' && (
+              <form onSubmit={editingNoteId ? saveEditedNote : addNote}>
+                <input autoFocus value={noteTitle} onChange={(event) => setNoteTitle(event.target.value)} placeholder="Note title" />
+                <textarea value={noteContent} onChange={(event) => setNoteContent(event.target.value)} placeholder="Write your note..." rows={10} />
+                <div className="note-editor-hint">Use a clear title and keep the important details in the main note body.</div>
+                <div className="modal-actions">
+                  <button type="button" className="ghost" onClick={() => { setEditingNoteId(null); setCaptureOpen(false) }}>Cancel</button>
+                  <button className="action" disabled={busy}>{editingNoteId ? 'Save changes' : 'Save note'}</button>
+                </div>
+              </form>
+            )}
             {captureMode === 'url' && <form onSubmit={captureUrl}><input autoFocus value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/article" type="url" /><p className="muted">The API will extract the page title and readable content and save it as a note.</p><div className="modal-actions"><button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="action" disabled={busy}>Capture source</button></div></form>}
           </div>
         </div>
