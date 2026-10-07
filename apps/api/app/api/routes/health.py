@@ -84,3 +84,13 @@ async def notes_write_health():
             "notes_write": False,
             "error_type": exc.__class__.__name__,
         }
+
+
+
+@router.get("/health/ai")
+async def ai_health():
+    return {
+        "status": "ok",
+        "ai_configured": bool(settings.gemini_api_key),
+        "model": settings.ai_model,
+    }
