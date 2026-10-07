@@ -1,15 +1,18 @@
 from collections.abc import AsyncGenerator
-from urllib.parse import urlsplit
+import asyncio
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from .config import settings
+from ..models import Base
 
 
 _engine = None
 SessionLocal = None
+_schema_ready = False
+_schema_lock = asyncio.Lock()
 
 
 def _normalize_postgres_dsn(raw_url: str) -> str:
@@ -28,7 +31,8 @@ def _normalize_postgres_dsn(raw_url: str) -> str:
 
 
 def _get_sqlalchemy_url(raw_url: str) -> str:
-    return "postgresql+psycopg://" + _normalize_postgres_dsn(raw_url)[len("postgresql://"):]
+    dsn = _normalize_postgres_dsn(raw_url)
+    return "postgresql+psycopg://" + dsn[len("postgresql://"):]
 
 
 def _get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -54,13 +58,33 @@ def _get_session_factory() -> async_sessionmaker[AsyncSession]:
     return SessionLocal
 
 
+async def _ensure_schema() -> None:
+    global _schema_ready
+
+    if _schema_ready:
+        return
+
+    if _engine is None:
+        raise RuntimeError("Database engine is not initialized")
+
+    async with _schema_lock:
+        if _schema_ready:
+            return
+
+        async with _engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+
+        _schema_ready = True
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     try:
         session_factory = _get_session_factory()
+        await _ensure_schema()
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Database configuration error: {exc.__class__.__name__}",
+            detail=f"Database initialization failed: {exc.__class__.__name__}",
         ) from exc
 
     try:
