@@ -60,6 +60,7 @@ export default function Page() {
   ])
   const [darkMode, setDarkMode] = useState(true)
   const [syncing, setSyncing] = useState(true)
+  const [aiReady, setAiReady] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -127,6 +128,26 @@ export default function Page() {
     }
 
     void loadWorkspace()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function checkAi() {
+      try {
+        const response = await fetch(apiBase + '/health/ai', { cache: 'no-store' })
+        if (!response.ok) return
+        const result = await response.json()
+        if (!cancelled) setAiReady(Boolean(result.ai_configured))
+      } catch {
+        if (!cancelled) setAiReady(false)
+      }
+    }
+
+    void checkAi()
     return () => {
       cancelled = true
     }
@@ -202,7 +223,7 @@ export default function Page() {
       const response = await fetch(apiBase + '/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, priority: 0 }),
+        body: JSON.stringify({ title, priority: 1 }),
       })
       if (!response.ok) throw new Error('API task creation failed')
 
@@ -413,6 +434,9 @@ export default function Page() {
           body: JSON.stringify({ message }),
         })
         const result = await response.json()
+        if (!response.ok) {
+          throw new Error(result.detail || 'AI request failed')
+        }
         setChat((current) => [...current, { role: 'assistant', text: result.message || 'I am ready to help.' }])
       } else {
         const reply =
@@ -605,7 +629,7 @@ export default function Page() {
         {active === 'AI Assistant' && (
           <section className="ai-layout">
             <div className="card chat-card">
-              <div className="chat-header"><div><span className="pill">PRIVATE AI</span><h2>Assistant</h2></div><span className={apiBase ? 'status ok' : 'status'}>{apiBase ? 'API connected' : 'Local mode'}</span></div>
+              <div className="chat-header"><div><span className="pill">PRIVATE AI</span><h2>Assistant</h2></div><span className={aiReady ? 'status ok' : 'status'}>{aiReady ? 'AI ready' : 'AI setup needed'}</span></div>
               <div className="messages">
                 {chat.map((entry, index) => <div className={entry.role === 'user' ? 'message user' : 'message'} key={index}>{entry.text}</div>)}
                 {busy && <div className="message">Thinking…</div>}
