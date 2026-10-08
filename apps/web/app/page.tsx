@@ -410,6 +410,45 @@ export default function Page() {
     }
   }
 
+  async function createTasksFromUrl(event: FormEvent) {
+    event.preventDefault()
+    const target = url.trim()
+    if (!target) return
+    setBusy(true)
+
+    try {
+      const response = await fetch(apiBase + '/ai/tasks-from-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: target }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'AI task generation failed')
+
+      const createdTasks: Task[] = (result.tasks || []).map((task: {
+        id: string
+        title: string
+        priority: number
+        status: string
+      }) => ({
+        id: task.id,
+        title: task.title,
+        completed: task.status === 'done',
+        priority: task.priority >= 2 ? 'High' : task.priority === 1 ? 'Medium' : 'Low',
+      }))
+
+      setTasks((current) => [...createdTasks, ...current])
+      setUrl('')
+      setCaptureOpen(false)
+      showNotice(createdTasks.length + ' tasks created from YouTube')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown task generation error'
+      showNotice('Could not create tasks: ' + detail)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function captureUrl(event: FormEvent) {
     event.preventDefault()
     const target = url.trim()
@@ -722,7 +761,17 @@ export default function Page() {
                 </div>
               </form>
             )}
-            {captureMode === 'url' && <form onSubmit={captureUrl}><input autoFocus value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/article" type="url" /><p className="muted">The API will extract the page title and readable content and save it as a note.</p><div className="modal-actions"><button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button><button className="action" disabled={busy}>Capture source</button></div></form>}
+            {captureMode === 'url' && (
+              <form onSubmit={captureUrl}>
+                <input autoFocus value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." type="url" />
+                <p className="muted">Save a normal web source as a note, or use AI to turn a public YouTube lesson into concrete tasks.</p>
+                <div className="modal-actions">
+                  <button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button>
+                  <button type="submit" className="ghost" disabled={busy}>Save source</button>
+                  <button type="button" className="action" disabled={busy} onClick={(event) => void createTasksFromUrl(event as unknown as FormEvent)}>Create tasks with AI</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
