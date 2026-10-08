@@ -92,5 +92,6 @@ async def ai_health():
     return {
         "status": "ok",
         "ai_configured": bool(settings.gemini_api_key),
+        "provider": "gemini",
         "model": settings.ai_model,
     }
