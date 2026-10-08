@@ -410,8 +410,7 @@ export default function Page() {
     }
   }
 
-  async function createTasksFromUrl(event: FormEvent) {
-    event.preventDefault()
+  async function createTasksFromUrl() {
     const target = url.trim()
     if (!target) return
     setBusy(true)
@@ -768,7 +767,7 @@ export default function Page() {
                 <div className="modal-actions">
                   <button type="button" className="ghost" onClick={() => setCaptureOpen(false)}>Cancel</button>
                   <button type="submit" className="ghost" disabled={busy}>Save source</button>
-                  <button type="button" className="action" disabled={busy} onClick={(event) => void createTasksFromUrl(event as unknown as FormEvent)}>Create tasks with AI</button>
+                  <button type="button" className="action" disabled={busy} onClick={() => void createTasksFromUrl()}>Create tasks with AI</button>
                 </div>
               </form>
             )}
