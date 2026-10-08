@@ -472,8 +472,9 @@ export default function Page() {
             : 'I can work with your tasks and notes once the API is connected. For now, I can still help you plan directly in this workspace.'
         setChat((current) => [...current, { role: 'assistant', text: reply }])
       }
-    } catch {
-      setChat((current) => [...current, { role: 'assistant', text: 'The AI API is unavailable right now.' }])
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown AI API error'
+      setChat((current) => [...current, { role: 'assistant', text: 'AI request failed: ' + detail }])
     } finally {
       setBusy(false)
     }
@@ -547,7 +548,7 @@ export default function Page() {
           <div className="dashboard">
             <section className="card welcome">
               <div>
-                <div className="pill">AI READY</div>
+                <div className={aiReady ? 'pill' : 'pill warning'}>{aiReady ? 'AI READY' : 'AI SETUP NEEDED'}</div>
                 <h2>Good evening 👋</h2>
                 <p>Capture a link, organize a task, or ask your assistant anything.</p>
                 <div className="quick-actions">
