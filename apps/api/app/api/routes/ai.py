@@ -112,6 +112,114 @@ def _generate(prompt: str, agent_id: str) -> str:
     return (response.text or "").strip()
 
 
+
+def _extract_youtube_id(url: str) -> str | None:
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.strip("/")
+
+    if host in {"youtube.com", "www.youtube.com", "m.youtube.com"}:
+        if path == "watch":
+            return parse_qs(parsed.query).get("v", [None])[0]
+        if path.startswith("shorts/"):
+            return path.split("/", 1)[1].split("/")[0]
+        if path.startswith("embed/"):
+            return path.split("/", 1)[1].split("/")[0]
+    if host == "youtu.be":
+        return path.split("/")[0]
+
+    return None
+
+
+def _fetch_youtube_transcript(video_id: str) -> tuple[str, str]:
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    api = YouTubeTranscriptApi()
+
+    errors: list[Exception] = []
+    for languages in (["ar", "en"], ["en"], ["ar"]):
+        try:
+            transcript = api.fetch(video_id, languages=languages)
+            text = " ".join(snippet.text.strip() for snippet in transcript if snippet.text.strip())
+            if text:
+                return text, transcript.language_code
+        except Exception as exc:
+            errors.append(exc)
+
+    raise RuntimeError(
+        "No usable YouTube transcript was available."
+        + (f" {errors[-1].__class__.__name__}" if errors else "")
+    )
+
+
+def _generate_tasks_from_transcript(transcript: str, source_url: str) -> list[dict]:
+    import json
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=settings.gemini_api_key)
+    prompt = f"""
+You are the Task Manager agent inside TaskifyNote.
+
+Turn the following YouTube lesson transcript into 3 to 7 concrete learning tasks.
+Each task must be something the user can actually do, not a vague goal.
+Prefer a progression: watch/understand, practice, review, and apply.
+Do not invent topics that are not supported by the transcript.
+
+Return ONLY valid JSON in this shape:
+[
+  {{
+    "title": "short task title",
+    "description": "one-sentence actionable description",
+    "priority": 0
+  }}
+]
+
+Use priority 2 for essential tasks, 1 for useful tasks, and 0 for optional tasks.
+Source URL: {source_url}
+
+Transcript:
+{transcript[:30000]}
+"""
+
+    response = client.models.generate_content(
+        model=settings.ai_model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.2,
+            max_output_tokens=1000,
+        ),
+    )
+
+    raw = (response.text or "").strip()
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise ValueError("AI task output was not a list")
+
+    cleaned: list[dict] = []
+    for item in parsed[:7]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", "")).strip()
+        description = str(item.get("description", "")).strip()
+        priority = int(item.get("priority", 0))
+        if title:
+            cleaned.append(
+                {
+                    "title": title[:500],
+                    "description": description[:2000],
+                    "priority": max(0, min(priority, 2)),
+                }
+            )
+
+    if not cleaned:
+        raise ValueError("AI returned no usable tasks")
+    return cleaned
+
 @router.get("/agents")
 async def list_agents():
     return {
@@ -126,6 +234,84 @@ async def list_agents():
         ],
         "model": settings.ai_model,
         "provider": "gemini",
+    }
+
+
+@router.post("/tasks-from-url")
+async def tasks_from_url(payload: dict):
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="A YouTube URL is required.")
+
+    video_id = _extract_youtube_id(url)
+    if not video_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This action currently supports public YouTube video URLs.",
+        )
+
+    if not settings.gemini_api_key:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured.")
+
+    try:
+        transcript, language = await asyncio.to_thread(
+            _fetch_youtube_transcript, video_id
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read the YouTube transcript: {exc.__class__.__name__}",
+        ) from exc
+
+    try:
+        task_specs = await asyncio.to_thread(
+            _generate_tasks_from_transcript, transcript, url
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"AI task generation failed: {exc.__class__.__name__}",
+        ) from exc
+
+    try:
+        factory = _get_session_factory()
+        async with factory() as db:
+            created = []
+            for spec in task_specs:
+                task = Task(
+                    title=spec["title"],
+                    description=spec["description"],
+                    priority=spec["priority"],
+                    status="todo",
+                )
+                db.add(task)
+                created.append(task)
+
+            await db.commit()
+            for task in created:
+                await db.refresh(task)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not save generated tasks: {exc.__class__.__name__}",
+        ) from exc
+
+    return {
+        "status": "created",
+        "video_id": video_id,
+        "source_url": url,
+        "transcript_language": language,
+        "count": len(created),
+        "tasks": [
+            {
+                "id": str(task.id),
+                "title": task.title,
+                "description": task.description,
+                "priority": task.priority,
+                "status": task.status,
+            }
+            for task in created
+        ],
     }
 
 
