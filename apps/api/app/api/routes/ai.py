@@ -226,7 +226,7 @@ def _youtube_url_from_message(message: str) -> str | None:
     match = re.search(r"https?://(?:www\.)?(?:youtube\.com/watch\?[^\s]+|youtu\.be/[^\s]+)", message)
     if not match:
         return None
-    return match.group(0).rstrip(".,!?)]}>\\\"'")
+    return match.group(0).rstrip(".,!?)]}>")
 
 
 def _asks_to_create_tasks(message: str) -> bool:
