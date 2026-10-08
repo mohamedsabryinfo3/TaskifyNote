@@ -220,6 +220,35 @@ Transcript:
         raise ValueError("AI returned no usable tasks")
     return cleaned
 
+def _youtube_url_from_message(message: str) -> str | None:
+    import re
+
+    match = re.search(r"https?://(?:www\\.)?(?:youtube\\.com/watch\\?[^\\s]+|youtu\\.be/[^\\s]+)", message)
+    if not match:
+        return None
+    return match.group(0).rstrip(".,!?)]}>"'")
+
+
+def _asks_to_create_tasks(message: str) -> bool:
+    lowered = message.lower()
+    keywords = (
+        "task",
+        "tasks",
+        "create task",
+        "make tasks",
+        "turn into tasks",
+        "مهام",
+        "مهمة",
+        "اعملي",
+        "اعمل",
+        "أنشئ",
+        "انشئ",
+        "حول",
+        "حوّل",
+    )
+    return any(keyword in lowered for keyword in keywords)
+
+
 @router.get("/agents")
 async def list_agents():
     return {
@@ -237,12 +266,7 @@ async def list_agents():
     }
 
 
-@router.post("/tasks-from-url")
-async def tasks_from_url(payload: dict):
-    url = str(payload.get("url", "")).strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="A YouTube URL is required.")
-
+async def _create_tasks_from_youtube(url: str) -> dict:
     video_id = _extract_youtube_id(url)
     if not video_id:
         raise HTTPException(
@@ -315,8 +339,40 @@ async def tasks_from_url(payload: dict):
     }
 
 
+@router.post("/tasks-from-url")
+async def tasks_from_url(payload: dict):
+    url = str(payload.get("url", "")).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="A YouTube URL is required.")
+    return await _create_tasks_from_youtube(url)
+
+
 @router.post("/chat")
 async def chat(payload: ChatRequest):
+    youtube_url = _youtube_url_from_message(payload.message)
+    if youtube_url and _asks_to_create_tasks(payload.message):
+        result = await _create_tasks_from_youtube(youtube_url)
+        task_lines = "\n".join(
+            f"- {task['title']}" for task in result["tasks"]
+        )
+        return {
+            "message": (
+                f"Done — I created {result['count']} tasks from the YouTube video.\n"
+                f"\n{task_lines}"
+            ),
+            "input": payload.message,
+            "agent_id": "task-manager",
+            "agent_name": AGENTS["task-manager"]["name"],
+            "model": settings.ai_model,
+            "provider": "gemini",
+            "actions": [
+                {"type": "create_task", "task_id": task["id"]}
+                for task in result["tasks"]
+            ],
+            "source_url": youtube_url,
+            "transcript_language": result["transcript_language"],
+        }
+
     if not settings.gemini_api_key:
         raise HTTPException(
             status_code=503,
